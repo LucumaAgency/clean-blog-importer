@@ -96,81 +96,100 @@ class CBI_CSV_Processor {
         error_log('=== PARSEANDO FILA DEL CSV ===');
         error_log('Headers encontrados: ' . implode(', ', array_slice($headers, 0, 15)));
 
+        // IMPORTANTE: Usar índices específicos para columnas con nombres duplicados
+        // Columna 0: ID
+        if (isset($data[0])) {
+            $post['original_id'] = $data[0];
+            error_log("ID Original (col 0): " . $post['original_id']);
+        }
+
+        // Columna 1: Title (el título correcto del post)
+        if (isset($data[1])) {
+            $post['title'] = $this->cleaner->clean_text($data[1]);
+            error_log("TÍTULO DEL POST (col 1): " . $post['title']);
+        }
+
+        // Columna 2: Content
+        if (isset($data[2])) {
+            $post['content'] = $this->cleaner->clean_content($data[2]);
+        }
+
+        // Columna 3: Excerpt
+        if (isset($data[3])) {
+            $post['excerpt'] = $this->cleaner->clean_text($data[3]);
+        }
+
+        // Columna 4: Date
+        if (isset($data[4])) {
+            $post['date'] = $data[4];
+        }
+
+        // Columna 5: Post Type
+        if (isset($data[5])) {
+            $value = trim(strtolower($data[5]));
+            $post['post_type'] = (!empty($value) && $value !== 'post') ? $value : 'post';
+        }
+
+        // Columna 11: Featured Image
+        if (isset($data[11]) && !empty($data[11])) {
+            $post['featured_image'] = $data[11];
+            error_log("Imagen destacada (col 11): " . $post['featured_image']);
+        }
+
+        // Columna 13: Categorías
+        if (isset($data[13])) {
+            $post['categories'] = $this->parse_terms($data[13]);
+        }
+
+        // Columna 14: Etiquetas
+        if (isset($data[14])) {
+            $post['tags'] = $this->parse_terms($data[14]);
+        }
+
+        // Columna 39: Status
+        if (isset($data[39])) {
+            $post['status'] = $data[39];
+        }
+
+        // Columna 41: Author Username
+        if (isset($data[41])) {
+            $post['author'] = $data[41];
+        }
+
+        // Columna 45: Slug
+        if (isset($data[45])) {
+            $post['slug'] = sanitize_title($data[45]);
+        }
+
+        // Procesar el resto de columnas por nombre (para campos no críticos)
         foreach ($headers as $index => $header) {
-            if (isset($data[$index])) {
+            // Saltar las columnas ya procesadas por índice
+            if (in_array($index, [0, 1, 2, 3, 4, 5, 11, 13, 14, 39, 41, 45])) {
+                continue;
+            }
+
+            if (isset($data[$index]) && !empty($data[$index])) {
                 $value = $data[$index];
 
-                // Debug para columnas importantes
+                // Debug para columnas adicionales
                 if ($index < 15 && !empty($value)) {
                     error_log("Columna $index ($header): " . substr($value, 0, 100));
                 }
 
                 switch ($header) {
-                    case 'id':
-                        $post['original_id'] = $value;
-                        break;
-
-                    case 'title':
-                        $post['title'] = $this->cleaner->clean_text($value);
-                        error_log("TÍTULO ASIGNADO: " . $post['title']);
-                        break;
-
-                    case 'content':
-                        $post['content'] = $this->cleaner->clean_content($value);
-                        break;
-
-                    case 'excerpt':
-                        $post['excerpt'] = $this->cleaner->clean_text($value);
-                        break;
-
-                    case 'date':
-                        $post['date'] = $value;
-                        break;
-
-                    case 'post type':
-                        // Limpiar y validar el tipo de post
-                        $value = trim(strtolower($value));
-                        $post['post_type'] = (!empty($value) && $value !== 'post') ? $value : 'post';
-                        break;
-
-                    case 'status':
-                        $post['status'] = $value;
-                        break;
-
-                    case 'slug':
-                        $post['slug'] = sanitize_title($value);
-                        break;
-
-                    case 'categorías':
-                    case 'categories':
-                        $post['categories'] = $this->parse_terms($value);
-                        break;
-
-                    case 'etiquetas':
-                    case 'tags':
-                        $post['tags'] = $this->parse_terms($value);
-                        break;
-
-                    case 'featured':
-                        // Columna 11: Imagen destacada
-                        if (!empty($value)) {
-                            $post['featured_image'] = $value;
-                            error_log("Imagen destacada encontrada en columna Featured: $value");
-                        }
+                    // Solo procesar campos adicionales que no se han procesado por índice
+                    case 'permalink':
+                        // Guardar para referencia si es necesario
                         break;
 
                     case 'url':
-                        // Columna 7: Primera URL (puede ser imagen destacada si no hay columna Featured)
-                        // Columna 12: Segunda URL (vacía en este caso)
-                        if ($index == 7 && !empty($value) && empty($post['featured_image'])) {
-                            // Solo usar como imagen destacada si no se ha establecido ya
-                            $post['featured_image'] = $value;
-                            error_log("Imagen destacada encontrada en columna URL (index 7): $value");
-                        }
+                        // URL en columna 7 podría ser imagen adicional
+                        // URL en columna 12 es otra URL (generalmente vacía)
+                        // Ya procesamos la imagen destacada en columna 11
                         break;
 
-                    case 'author username':
-                        $post['author'] = $value;
+                    default:
+                        // Ignorar otras columnas duplicadas o no necesarias
                         break;
                 }
             }
