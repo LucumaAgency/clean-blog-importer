@@ -35,12 +35,17 @@ class CBI_CSV_Processor {
             throw new Exception('No se pudo abrir el archivo CSV');
         }
 
+        // Configurar para manejar CSVs con contenido complejo
+        ini_set('auto_detect_line_endings', true);
+
         // Leer encabezados
-        $headers = fgetcsv($handle);
+        $headers = fgetcsv($handle, 0, ',', '"', '\\');
         if (!$headers) {
             fclose($handle);
             throw new Exception('El archivo CSV está vacío o mal formateado');
         }
+
+        error_log('Número de columnas detectadas: ' . count($headers));
 
         // Convertir encabezados a minúsculas y limpiar BOM
         $headers = array_map(function($header) {
@@ -50,7 +55,12 @@ class CBI_CSV_Processor {
         }, $headers);
 
         // Procesar cada fila
-        while (($data = fgetcsv($handle)) !== FALSE) {
+        while (($data = fgetcsv($handle, 0, ',', '"', '\\')) !== FALSE) {
+            // Verificar que la fila tenga el mismo número de columnas que los headers
+            if (count($data) !== count($headers)) {
+                error_log('⚠ Fila con número incorrecto de columnas: ' . count($data) . ' vs ' . count($headers) . ' esperadas');
+            }
+
             try {
                 $post_data = $this->parse_row($headers, $data);
 
@@ -102,6 +112,7 @@ class CBI_CSV_Processor {
 
                     case 'title':
                         $post['title'] = $this->cleaner->clean_text($value);
+                        error_log("TÍTULO ASIGNADO: " . $post['title']);
                         break;
 
                     case 'content':
@@ -170,6 +181,14 @@ class CBI_CSV_Processor {
             $post['content_images'] = $this->cleaner->extract_images($post['content']);
         }
 
+        // Debug final del post parseado
+        error_log('=== POST PARSEADO ===');
+        error_log('Título final: ' . ($post['title'] ?? 'SIN TÍTULO'));
+        error_log('ID Original: ' . ($post['original_id'] ?? 'SIN ID'));
+        error_log('Imagen destacada: ' . ($post['featured_image'] ?? 'SIN IMAGEN'));
+        error_log('Tipo de post: ' . ($post['post_type'] ?? 'post'));
+        error_log('Estado: ' . ($post['status'] ?? 'draft'));
+
         return $post;
     }
 
@@ -227,6 +246,12 @@ class CBI_CSV_Processor {
             'post_type'    => $post_data['post_type'] ?? 'post',
             'post_name'    => $post_data['slug'] ?? '',
         ];
+
+        // Verificar que el título no esté vacío
+        if (empty($post_args['post_title'])) {
+            error_log('⚠ ADVERTENCIA: Título vacío, usando título por defecto');
+            $post_args['post_title'] = 'Post importado ' . date('Y-m-d H:i:s');
+        }
 
         // Si se fuerza publicación, establecer como publicado
         if (!empty($options['force_publish'])) {
