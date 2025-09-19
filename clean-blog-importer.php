@@ -66,6 +66,9 @@ class CleanBlogImporter {
                 <?php if ($_GET['message'] == 'success'): ?>
                     <div class="notice notice-success is-dismissible">
                         <p>¡Importación completada exitosamente! Se importaron <?php echo $_GET['count'] ?? 0; ?> posts.</p>
+                        <?php if (isset($_GET['post_ids'])): ?>
+                            <p>IDs de posts creados: <?php echo esc_html($_GET['post_ids']); ?></p>
+                        <?php endif; ?>
                     </div>
                 <?php elseif ($_GET['message'] == 'error'): ?>
                     <div class="notice notice-error is-dismissible">
@@ -73,6 +76,17 @@ class CleanBlogImporter {
                     </div>
                 <?php endif; ?>
             <?php endif; ?>
+
+            <?php
+            // Verificar si ACF está instalado
+            if (!function_exists('update_field')) {
+                ?>
+                <div class="notice notice-warning">
+                    <p><strong>Advertencia:</strong> Advanced Custom Fields (ACF) no está instalado. Las imágenes de galería se guardarán como meta alternativa.</p>
+                </div>
+                <?php
+            }
+            ?>
 
             <form method="post" enctype="multipart/form-data" action="">
                 <?php wp_nonce_field('cbi_import_nonce', 'cbi_nonce'); ?>
@@ -106,6 +120,26 @@ class CleanBlogImporter {
                         <td>
                             <input type="checkbox" name="preserve_dates" id="preserve_dates" value="1" checked />
                             <label for="preserve_dates">Mantener las fechas originales de publicación</label>
+                        </td>
+                    </tr>
+
+                    <tr>
+                        <th scope="row">
+                            <label for="acf_gallery_field">Campo ACF de galería</label>
+                        </th>
+                        <td>
+                            <input type="text" name="acf_gallery_field" id="acf_gallery_field" value="field_686ea8c997852" class="regular-text" />
+                            <p class="description">Key del campo ACF donde se guardarán las imágenes de la galería (por defecto: field_686ea8c997852)</p>
+                        </td>
+                    </tr>
+
+                    <tr>
+                        <th scope="row">
+                            <label for="force_publish">Forzar publicación</label>
+                        </th>
+                        <td>
+                            <input type="checkbox" name="force_publish" id="force_publish" value="1" />
+                            <label for="force_publish">Publicar todos los posts importados (ignorar estado del CSV)</label>
                         </td>
                     </tr>
                 </table>
@@ -174,10 +208,20 @@ class CleanBlogImporter {
             $importer = new CBI_CSV_Processor();
             $result = $importer->process_csv($file, [
                 'import_images' => isset($_POST['import_images']),
-                'preserve_dates' => isset($_POST['preserve_dates'])
+                'preserve_dates' => isset($_POST['preserve_dates']),
+                'acf_gallery_field' => $_POST['acf_gallery_field'] ?? 'field_686ea8c997852',
+                'force_publish' => isset($_POST['force_publish'])
             ]);
 
-            wp_redirect(admin_url('admin.php?page=clean-blog-importer&message=success&count=' . $result['imported']));
+            // Construir URL de redirección con información adicional
+            $redirect_url = add_query_arg([
+                'page' => 'clean-blog-importer',
+                'message' => 'success',
+                'count' => $result['imported'],
+                'post_ids' => isset($result['post_ids']) ? implode(',', $result['post_ids']) : ''
+            ], admin_url('admin.php'));
+
+            wp_redirect($redirect_url);
         } catch (Exception $e) {
             wp_redirect(admin_url('admin.php?page=clean-blog-importer&message=error&error=' . urlencode($e->getMessage())));
         }

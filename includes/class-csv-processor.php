@@ -26,7 +26,8 @@ class CBI_CSV_Processor {
         $result = [
             'imported' => 0,
             'skipped' => 0,
-            'errors' => []
+            'errors' => [],
+            'post_ids' => []
         ];
 
         // Abrir archivo CSV
@@ -61,6 +62,7 @@ class CBI_CSV_Processor {
 
                 if ($imported_id) {
                     $result['imported']++;
+                    $result['post_ids'][] = $imported_id;
                 } else {
                     $result['skipped']++;
                 }
@@ -167,6 +169,12 @@ class CBI_CSV_Processor {
      * Importar post a WordPress
      */
     private function import_post($post_data, $options) {
+        // Debug logging
+        error_log('=== INICIANDO IMPORTACIÓN DE POST ===');
+        error_log('Título: ' . ($post_data['title'] ?? 'Sin título'));
+        error_log('Estado original: ' . ($post_data['status'] ?? 'draft'));
+        error_log('Opciones: ' . print_r($options, true));
+
         // Preparar datos del post
         $post_args = [
             'post_title'   => $post_data['title'] ?? '',
@@ -176,6 +184,20 @@ class CBI_CSV_Processor {
             'post_type'    => $post_data['post_type'] ?? 'post',
             'post_name'    => $post_data['slug'] ?? '',
         ];
+
+        // Si se fuerza publicación, establecer como publicado
+        if (!empty($options['force_publish'])) {
+            $post_args['post_status'] = 'publish';
+            error_log('Forzando publicación del post');
+        }
+
+        // Asegurar que el estado sea válido
+        $valid_statuses = ['publish', 'draft', 'pending', 'private'];
+        if (!in_array($post_args['post_status'], $valid_statuses)) {
+            $post_args['post_status'] = 'draft';
+        }
+
+        error_log('Datos del post preparados: ' . print_r($post_args, true));
 
         // Establecer fecha si está configurado
         if (!empty($options['preserve_dates']) && !empty($post_data['date'])) {
@@ -195,8 +217,11 @@ class CBI_CSV_Processor {
         $post_id = wp_insert_post($post_args, true);
 
         if (is_wp_error($post_id)) {
+            error_log('ERROR al crear post: ' . $post_id->get_error_message());
             throw new Exception('Error al crear post: ' . $post_id->get_error_message());
         }
+
+        error_log('Post creado exitosamente con ID: ' . $post_id);
 
         // Agregar categorías
         if (!empty($post_data['categories'])) {
@@ -212,16 +237,22 @@ class CBI_CSV_Processor {
             }
             if (!empty($category_ids)) {
                 wp_set_post_categories($post_id, $category_ids);
+                error_log('Categorías asignadas: ' . implode(', ', $category_ids));
             }
         }
 
         // Agregar etiquetas
         if (!empty($post_data['tags'])) {
             wp_set_post_tags($post_id, $post_data['tags']);
+            error_log('Etiquetas asignadas: ' . implode(', ', $post_data['tags']));
         }
+
+        // Array para guardar IDs de imágenes de galería
+        $gallery_images = [];
 
         // Procesar imagen destacada
         if (!empty($options['import_images']) && !empty($post_data['featured_image'])) {
+            error_log('Procesando imagen destacada: ' . $post_data['featured_image']);
             try {
                 $attachment_id = $this->image_processor->import_image(
                     $post_data['featured_image'],
@@ -230,16 +261,21 @@ class CBI_CSV_Processor {
                 );
 
                 if ($attachment_id) {
-                    set_post_thumbnail($post_id, $attachment_id);
+                    $result = set_post_thumbnail($post_id, $attachment_id);
+                    if ($result) {
+                        error_log('Imagen destacada establecida: ID ' . $attachment_id);
+                    } else {
+                        error_log('No se pudo establecer la imagen destacada');
+                    }
                 }
             } catch (Exception $e) {
-                // Log error pero continuar con la importación
                 error_log('Error importando imagen destacada: ' . $e->getMessage());
             }
         }
 
         // Procesar imágenes del contenido
         if (!empty($options['import_images']) && !empty($post_data['content_images'])) {
+            error_log('Procesando ' . count($post_data['content_images']) . ' imágenes del contenido');
             $updated_content = $post_data['content'];
 
             foreach ($post_data['content_images'] as $img_url) {
@@ -251,13 +287,16 @@ class CBI_CSV_Processor {
                     );
 
                     if ($attachment_id) {
+                        // Agregar a array de galería
+                        $gallery_images[] = $attachment_id;
+
                         $new_url = wp_get_attachment_url($attachment_id);
                         if ($new_url) {
                             $updated_content = str_replace($img_url, $new_url, $updated_content);
                         }
+                        error_log('Imagen procesada: ' . $img_url . ' -> ID ' . $attachment_id);
                     }
                 } catch (Exception $e) {
-                    // Log error pero continuar
                     error_log('Error importando imagen de contenido: ' . $e->getMessage());
                 }
             }
@@ -268,7 +307,20 @@ class CBI_CSV_Processor {
                     'ID' => $post_id,
                     'post_content' => $updated_content
                 ]);
+                error_log('Contenido actualizado con nuevas URLs de imágenes');
             }
+        }
+
+        // Guardar imágenes en campo ACF de galería
+        if (!empty($gallery_images) && function_exists('update_field')) {
+            // Campo ACF para galería de imágenes (configurable)
+            $acf_gallery_field = $options['acf_gallery_field'] ?? 'field_686ea8c997852';
+            update_field($acf_gallery_field, $gallery_images, $post_id);
+            error_log('Galería ACF actualizada con ' . count($gallery_images) . ' imágenes en campo: ' . $acf_gallery_field);
+        } elseif (!empty($gallery_images)) {
+            // Si ACF no está disponible, guardar como meta alternativa
+            update_post_meta($post_id, 'gallery_images', $gallery_images);
+            error_log('Imágenes de galería guardadas como meta (ACF no disponible)');
         }
 
         // Guardar ID original como meta
@@ -276,6 +328,7 @@ class CBI_CSV_Processor {
             update_post_meta($post_id, '_original_import_id', $post_data['original_id']);
         }
 
+        error_log('=== IMPORTACIÓN COMPLETADA ===');
         return $post_id;
     }
 }
