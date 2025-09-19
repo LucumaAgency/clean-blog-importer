@@ -66,8 +66,29 @@ class CleanBlogImporter {
                 <?php if ($_GET['message'] == 'success'): ?>
                     <div class="notice notice-success is-dismissible">
                         <p>¡Importación completada exitosamente! Se importaron <?php echo $_GET['count'] ?? 0; ?> posts.</p>
-                        <?php if (isset($_GET['post_ids'])): ?>
-                            <p>IDs de posts creados: <?php echo esc_html($_GET['post_ids']); ?></p>
+                        <?php
+                        if (isset($_GET['post_ids']) && !empty($_GET['post_ids'])):
+                            $post_ids = explode(',', $_GET['post_ids']);
+                            ?>
+                            <p><strong>Posts creados:</strong></p>
+                            <ul>
+                                <?php foreach($post_ids as $pid):
+                                    $post = get_post($pid);
+                                    if ($post):
+                                        $original_id = get_post_meta($pid, '_original_import_id', true);
+                                        ?>
+                                        <li>
+                                            ID: <?php echo $pid; ?>
+                                            <?php if ($original_id): ?>(Original: <?php echo $original_id; ?>)<?php endif; ?>
+                                            - <a href="<?php echo get_edit_post_link($pid); ?>">Editar</a> |
+                                            <a href="<?php echo get_permalink($pid); ?>" target="_blank">Ver</a> |
+                                            Título: <?php echo esc_html($post->post_title); ?>
+                                        </li>
+                                    <?php else: ?>
+                                        <li style="color: red;">ID: <?php echo $pid; ?> - Post no encontrado</li>
+                                    <?php endif; ?>
+                                <?php endforeach; ?>
+                            </ul>
                         <?php endif; ?>
                     </div>
                 <?php elseif ($_GET['message'] == 'error'): ?>
@@ -156,6 +177,57 @@ class CleanBlogImporter {
                 </div>
                 <p class="progress-text">Procesando...</p>
             </div>
+
+            <hr style="margin: 40px 0;">
+
+            <h2>Posts Importados Anteriormente</h2>
+            <?php
+            // Buscar posts con el meta de importación
+            $imported_posts = get_posts([
+                'post_type' => 'post',
+                'posts_per_page' => 50,
+                'meta_key' => '_original_import_id',
+                'orderby' => 'date',
+                'order' => 'DESC',
+                'post_status' => 'any'
+            ]);
+
+            if ($imported_posts):
+            ?>
+                <table class="wp-list-table widefat fixed striped">
+                    <thead>
+                        <tr>
+                            <th>ID WordPress</th>
+                            <th>ID Original</th>
+                            <th>Título</th>
+                            <th>Estado</th>
+                            <th>Fecha Importación</th>
+                            <th>Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($imported_posts as $post):
+                            $original_id = get_post_meta($post->ID, '_original_import_id', true);
+                            ?>
+                            <tr>
+                                <td><?php echo $post->ID; ?></td>
+                                <td><?php echo $original_id ?: '-'; ?></td>
+                                <td><?php echo esc_html($post->post_title); ?></td>
+                                <td><?php echo $post->post_status; ?></td>
+                                <td><?php echo $post->post_date; ?></td>
+                                <td>
+                                    <a href="<?php echo get_edit_post_link($post->ID); ?>">Editar</a> |
+                                    <a href="<?php echo get_permalink($post->ID); ?>" target="_blank">Ver</a> |
+                                    <a href="<?php echo admin_url('post.php?post=' . $post->ID . '&action=trash'); ?>"
+                                       onclick="return confirm('¿Eliminar este post?');" style="color: #a00;">Papelera</a>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            <?php else: ?>
+                <p>No hay posts importados anteriormente.</p>
+            <?php endif; ?>
         </div>
 
         <style>

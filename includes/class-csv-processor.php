@@ -108,7 +108,9 @@ class CBI_CSV_Processor {
                         break;
 
                     case 'post type':
-                        $post['post_type'] = $value;
+                        // Limpiar y validar el tipo de post
+                        $value = trim(strtolower($value));
+                        $post['post_type'] = (!empty($value) && $value !== 'post') ? $value : 'post';
                         break;
 
                     case 'status':
@@ -171,9 +173,30 @@ class CBI_CSV_Processor {
     private function import_post($post_data, $options) {
         // Debug logging
         error_log('=== INICIANDO IMPORTACIÓN DE POST ===');
+        error_log('ID Original del CSV: ' . ($post_data['original_id'] ?? 'No especificado'));
         error_log('Título: ' . ($post_data['title'] ?? 'Sin título'));
         error_log('Estado original: ' . ($post_data['status'] ?? 'draft'));
+        error_log('Tipo de post: ' . ($post_data['post_type'] ?? 'post'));
         error_log('Opciones: ' . print_r($options, true));
+        error_log('Datos completos del post: ' . print_r($post_data, true));
+
+        // Verificar si ya existe un post con este ID original
+        if (!empty($post_data['original_id'])) {
+            $existing_post = $this->find_post_by_original_id($post_data['original_id']);
+            if ($existing_post) {
+                error_log('Post ya existe con ID WordPress: ' . $existing_post->ID . ' (ID original: ' . $post_data['original_id'] . ')');
+
+                // Opción: Actualizar el post existente en lugar de crear uno nuevo
+                if (!empty($options['update_existing'])) {
+                    error_log('Actualizando post existente...');
+                    $post_data['ID'] = $existing_post->ID;
+                    return $this->update_existing_post($post_data, $options);
+                } else {
+                    error_log('Saltando post duplicado');
+                    return $existing_post->ID; // Retornar el ID existente
+                }
+            }
+        }
 
         // Preparar datos del post
         $post_args = [
@@ -222,6 +245,20 @@ class CBI_CSV_Processor {
         }
 
         error_log('Post creado exitosamente con ID: ' . $post_id);
+
+        // Verificar que el post realmente existe
+        $created_post = get_post($post_id);
+        if (!$created_post) {
+            error_log('ERROR: El post con ID ' . $post_id . ' no existe después de crearlo');
+            throw new Exception('El post no se creó correctamente');
+        }
+
+        error_log('Verificación del post creado:');
+        error_log('- ID: ' . $created_post->ID);
+        error_log('- Título: ' . $created_post->post_title);
+        error_log('- Estado: ' . $created_post->post_status);
+        error_log('- Tipo: ' . $created_post->post_type);
+        error_log('- URL: ' . get_permalink($post_id));
 
         // Agregar categorías
         if (!empty($post_data['categories'])) {
@@ -329,6 +366,53 @@ class CBI_CSV_Processor {
         }
 
         error_log('=== IMPORTACIÓN COMPLETADA ===');
+        return $post_id;
+    }
+
+    /**
+     * Buscar post por ID original
+     */
+    private function find_post_by_original_id($original_id) {
+        global $wpdb;
+
+        $post_id = $wpdb->get_var($wpdb->prepare(
+            "SELECT post_id FROM {$wpdb->postmeta}
+             WHERE meta_key = '_original_import_id'
+             AND meta_value = %s
+             LIMIT 1",
+            $original_id
+        ));
+
+        if ($post_id) {
+            return get_post($post_id);
+        }
+
+        return null;
+    }
+
+    /**
+     * Actualizar post existente
+     */
+    private function update_existing_post($post_data, $options) {
+        $post_args = [
+            'ID' => $post_data['ID'],
+            'post_title'   => $post_data['title'] ?? '',
+            'post_content' => $post_data['content'] ?? '',
+            'post_excerpt' => $post_data['excerpt'] ?? '',
+        ];
+
+        // Solo actualizar estado si se fuerza publicación
+        if (!empty($options['force_publish'])) {
+            $post_args['post_status'] = 'publish';
+        }
+
+        $post_id = wp_update_post($post_args, true);
+
+        if (is_wp_error($post_id)) {
+            throw new Exception('Error al actualizar post: ' . $post_id->get_error_message());
+        }
+
+        error_log('Post actualizado exitosamente: ID ' . $post_id);
         return $post_id;
     }
 }
