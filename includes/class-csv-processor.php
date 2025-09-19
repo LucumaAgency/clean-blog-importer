@@ -82,9 +82,18 @@ class CBI_CSV_Processor {
     private function parse_row($headers, $data) {
         $post = [];
 
+        // Debug: mostrar mapeo de columnas
+        error_log('=== PARSEANDO FILA DEL CSV ===');
+        error_log('Headers encontrados: ' . implode(', ', array_slice($headers, 0, 15)));
+
         foreach ($headers as $index => $header) {
             if (isset($data[$index])) {
                 $value = $data[$index];
+
+                // Debug para columnas importantes
+                if ($index < 15 && !empty($value)) {
+                    error_log("Columna $index ($header): " . substr($value, 0, 100));
+                }
 
                 switch ($header) {
                     case 'id':
@@ -131,10 +140,21 @@ class CBI_CSV_Processor {
                         $post['tags'] = $this->parse_terms($value);
                         break;
 
-                    case 'url':
-                        // Puede ser URL de imagen destacada
-                        if (strpos($header, 'featured') !== false || $index == 12) {
+                    case 'featured':
+                        // Columna 11: Imagen destacada
+                        if (!empty($value)) {
                             $post['featured_image'] = $value;
+                            error_log("Imagen destacada encontrada en columna Featured: $value");
+                        }
+                        break;
+
+                    case 'url':
+                        // Columna 7: Primera URL (puede ser imagen destacada si no hay columna Featured)
+                        // Columna 12: Segunda URL (vacía en este caso)
+                        if ($index == 7 && !empty($value) && empty($post['featured_image'])) {
+                            // Solo usar como imagen destacada si no se ha establecido ya
+                            $post['featured_image'] = $value;
+                            error_log("Imagen destacada encontrada en columna URL (index 7): $value");
                         }
                         break;
 
@@ -313,14 +333,25 @@ class CBI_CSV_Processor {
         // Procesar imágenes del contenido
         if (!empty($options['import_images']) && !empty($post_data['content_images'])) {
             error_log('Procesando ' . count($post_data['content_images']) . ' imágenes del contenido');
+            error_log('URLs a procesar:');
+            foreach ($post_data['content_images'] as $idx => $url) {
+                error_log(($idx + 1) . '. ' . basename($url));
+            }
+
             $updated_content = $post_data['content'];
 
             foreach ($post_data['content_images'] as $img_url) {
                 try {
+                    // Verificar que no sea la misma imagen que la destacada
+                    if (!empty($post_data['featured_image']) && $img_url === $post_data['featured_image']) {
+                        error_log('Saltando imagen duplicada (ya es imagen destacada): ' . basename($img_url));
+                        continue;
+                    }
+
                     $attachment_id = $this->image_processor->import_image(
                         $img_url,
                         $post_id,
-                        $post_data['title'] . ' - Imagen de contenido'
+                        $post_data['title'] . ' - Imagen de galería'
                     );
 
                     if ($attachment_id) {
@@ -331,7 +362,7 @@ class CBI_CSV_Processor {
                         if ($new_url) {
                             $updated_content = str_replace($img_url, $new_url, $updated_content);
                         }
-                        error_log('Imagen procesada: ' . $img_url . ' -> ID ' . $attachment_id);
+                        error_log('Imagen procesada para galería: ' . basename($img_url) . ' -> ID ' . $attachment_id);
                     }
                 } catch (Exception $e) {
                     error_log('Error importando imagen de contenido: ' . $e->getMessage());
@@ -349,15 +380,44 @@ class CBI_CSV_Processor {
         }
 
         // Guardar imágenes en campo ACF de galería
-        if (!empty($gallery_images) && function_exists('update_field')) {
-            // Campo ACF para galería de imágenes (configurable)
-            $acf_gallery_field = $options['acf_gallery_field'] ?? 'field_686ea8c997852';
-            update_field($acf_gallery_field, $gallery_images, $post_id);
-            error_log('Galería ACF actualizada con ' . count($gallery_images) . ' imágenes en campo: ' . $acf_gallery_field);
-        } elseif (!empty($gallery_images)) {
-            // Si ACF no está disponible, guardar como meta alternativa
-            update_post_meta($post_id, 'gallery_images', $gallery_images);
-            error_log('Imágenes de galería guardadas como meta (ACF no disponible)');
+        if (!empty($gallery_images)) {
+            error_log('Total de imágenes para galería ACF: ' . count($gallery_images));
+            error_log('IDs de attachments para galería: ' . implode(', ', $gallery_images));
+
+            if (function_exists('update_field')) {
+                // Campo ACF para galería de imágenes (configurable)
+                $acf_gallery_field = $options['acf_gallery_field'] ?? 'field_686ea8c997852';
+
+                // Actualizar campo ACF
+                $result = update_field($acf_gallery_field, $gallery_images, $post_id);
+
+                if ($result) {
+                    error_log('✓ Galería ACF actualizada exitosamente con ' . count($gallery_images) . ' imágenes');
+                    error_log('  Campo ACF usado: ' . $acf_gallery_field);
+                    error_log('  Post ID: ' . $post_id);
+
+                    // Verificar que se guardó correctamente
+                    $saved_gallery = get_field($acf_gallery_field, $post_id);
+                    if ($saved_gallery) {
+                        error_log('✓ Verificación: Galería guardada correctamente con ' . count($saved_gallery) . ' imágenes');
+                    } else {
+                        error_log('⚠ Advertencia: No se pudo verificar la galería guardada');
+                    }
+                } else {
+                    error_log('✗ Error al actualizar galería ACF');
+                    // Intentar guardar como meta alternativa
+                    update_post_meta($post_id, 'gallery_images', $gallery_images);
+                    update_post_meta($post_id, '_gallery_images_ids', implode(',', $gallery_images));
+                    error_log('  Guardado como meta alternativa');
+                }
+            } else {
+                // Si ACF no está disponible, guardar como meta alternativa
+                update_post_meta($post_id, 'gallery_images', $gallery_images);
+                update_post_meta($post_id, '_gallery_images_ids', implode(',', $gallery_images));
+                error_log('⚠ ACF no disponible - Imágenes guardadas como meta');
+            }
+        } else {
+            error_log('No hay imágenes para la galería ACF');
         }
 
         // Guardar ID original como meta

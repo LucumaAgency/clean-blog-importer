@@ -289,12 +289,23 @@ class CBI_Content_Cleaner {
     public function extract_images($content) {
         $images = [];
 
-        // Buscar todas las imágenes
+        // Buscar todas las imágenes en tags img
         preg_match_all('/<img[^>]+src="([^"]+)"[^>]*>/i', $content, $matches);
 
         if (!empty($matches[1])) {
             foreach ($matches[1] as $url) {
-                // Filtrar solo URLs válidas
+                // Filtrar solo URLs válidas y excluir emojis de Facebook
+                if (filter_var($url, FILTER_VALIDATE_URL) &&
+                    strpos($url, 'static.xx.fbcdn.net/images/emoji') === false) {
+                    $images[] = $url;
+                }
+            }
+        }
+
+        // Buscar imágenes en enlaces href (galerías de Elementor)
+        preg_match_all('/href="([^"]*uploads[^"]+\.(?:jpg|jpeg|png|gif|webp))"/i', $content, $href_matches);
+        if (!empty($href_matches[1])) {
+            foreach ($href_matches[1] as $url) {
                 if (filter_var($url, FILTER_VALIDATE_URL)) {
                     $images[] = $url;
                 }
@@ -308,7 +319,8 @@ class CBI_Content_Cleaner {
                 $urls = explode(',', $srcset);
                 foreach ($urls as $url_part) {
                     $url = trim(explode(' ', trim($url_part))[0]);
-                    if (filter_var($url, FILTER_VALIDATE_URL)) {
+                    if (filter_var($url, FILTER_VALIDATE_URL) &&
+                        strpos($url, 'static.xx.fbcdn.net/images/emoji') === false) {
                         $images[] = $url;
                     }
                 }
@@ -317,6 +329,14 @@ class CBI_Content_Cleaner {
 
         // Eliminar duplicados
         $images = array_unique($images);
+
+        // Log para debug
+        if (!empty($images)) {
+            error_log('Imágenes extraídas del contenido (sin emojis): ' . count($images));
+            foreach (array_slice($images, 0, 5) as $img) {
+                error_log(' - ' . basename($img));
+            }
+        }
 
         return array_values($images);
     }
